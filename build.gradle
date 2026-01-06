@@ -2,7 +2,6 @@ plugins {
     id "java"
     id "signing"
     id "maven-publish"
-    id "io.github.gradle-nexus.publish-plugin" version "2.0.0"
 }
 
 group = 'io.github.autocomplete1'
@@ -74,19 +73,6 @@ project.plugins.withType(MavenPublishPlugin).all {
             }
         }
     }
-}
-
-nexusPublishing {
-    repositories {
-        sonatype {
-            nexusUrl.set(uri("https://s01.oss.sonatype.org/service/local/"))
-            snapshotRepositoryUrl.set(uri("https://s01.oss.sonatype.org/content/repositories/snapshots/"))
-            username.set(project.findProperty("ossrhUsername")?.toString() ?: System.getenv("OSSRH_USERNAME"))
-            password.set(project.findProperty("ossrhPassword")?.toString() ?: System.getenv("OSSRH_PASSWORD"))
-        }
-    }
-    connectTimeout = Duration.ofMinutes(3)
-    clientTimeout = Duration.ofMinutes(3)
 }
 
 publishing {
