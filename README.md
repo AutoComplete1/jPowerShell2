@@ -20,7 +20,7 @@ If you are stuck on an older Java version (like Java 8 or 11), you should use th
 
 ## 💻 Installation
 
-To install jPowerShell you can add the dependecy to your software project management tool: https://search.maven.org/artifact/io.github.autocomplete1/jPowerShell2/1.0.3/jar
+To install jPowerShell you can add the dependecy to your software project management tool: https://search.maven.org/artifact/io.github.autocomplete1/jPowerShell2/1.1.0/jar
 
 Maven:
  ```
@@ -38,7 +38,7 @@ implementation 'io.github.autocomplete1:jPowerShell2:1.1.0'
 ```
 
 Instead, you can direct download the JAR file and add it to your classpath.   
-https://repo1.maven.org/maven2/io/github/autocomplete1/jPowerShell2/1.0.3/jPowerShell2-1.0.3.jar
+https://repo1.maven.org/maven2/io/github/autocomplete1/jPowerShell2/1.1.0/jPowerShell2-1.1.0.jar
 
 ## ⚡️ Usage
 
