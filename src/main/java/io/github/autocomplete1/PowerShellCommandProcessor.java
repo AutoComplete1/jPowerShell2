@@ -31,13 +31,10 @@ class PowerShellCommandProcessor implements Callable<String> {
 
     private static final String CRLF = "\r\n";
 
-    private boolean closed = false;
-
     private final BufferedReader outputReader;
-
     private final boolean scriptMode;
-
     private final int waitPause;
+    private boolean closed = false;
 
     /**
      * Constructor that takes the output and the input of the PowerShell session
@@ -59,7 +56,7 @@ class PowerShellCommandProcessor implements Callable<String> {
      * @throws InterruptedException error when reading data
      */
     public String call() throws InterruptedException {
-        StringBuilder powerShellOutput = new StringBuilder();
+        StringBuilder powerShellOutput = new StringBuilder(1024);
 
         try {
             if (startReading()) {
@@ -70,32 +67,23 @@ class PowerShellCommandProcessor implements Callable<String> {
             return ioe.getMessage();
         }
 
-        //Remove last CRLF from result
-        return powerShellOutput.toString().replaceAll("\\s+$", "");
+        return trimTrailingWhitespace(powerShellOutput.toString());
     }
 
     //Reads all data from output
-    private void readData(StringBuilder powerShellOutput) throws IOException {
+    private void readData(StringBuilder powerShellOutput) throws IOException, InterruptedException {
         String line;
-        while (null != (line = this.outputReader.readLine())) {
+        while ((line = this.outputReader.readLine()) != null) {
 
-            //In the case of script mode it finishes when the last line is read
-            if (this.scriptMode) {
-                if (line.equals(PowerShell.END_SCRIPT_STRING)) {
-                    break;
-                }
+            if (this.scriptMode && line.equals(PowerShell.END_SCRIPT_STRING)) {
+                break;
             }
 
             powerShellOutput.append(line).append(CRLF);
 
-            //When not in script mode, it exits when the command is finished
             if (!this.scriptMode) {
-                try {
-                    if (this.closed || !canContinueReading()) {
-                        break;
-                    }
-                } catch (InterruptedException ex) {
-                    Logger.getLogger(PowerShellCommandProcessor.class.getName()).log(Level.SEVERE, "Error executing command and reading result", ex);
+                if (this.closed || !canContinueReading()) {
+                    break;
                 }
             }
         }
@@ -103,36 +91,32 @@ class PowerShellCommandProcessor implements Callable<String> {
 
     //Checks when we can start reading the output. Timeout if it takes too long in order to avoid hangs
     private boolean startReading() throws IOException, InterruptedException {
-        //If the reader is not ready, gives it some milliseconds
         while (!this.outputReader.ready()) {
-            synchronized (this) {
-                wait(this.waitPause);
-            }
-            if (this.closed) {
-                return false;
-            }
+            if (this.closed) return false;
+            Thread.sleep(this.waitPause);
         }
         return true;
     }
 
     //Checks when we have the reader can continue to read.
     private boolean canContinueReading() throws IOException, InterruptedException {
-        //If the reader is not ready, gives it some milliseconds
-        //It is important to do that, because the ready method guarantees that the readline will not be blocking
         if (!this.outputReader.ready()) {
-            synchronized (this) {
-                wait(this.waitPause);
-            }
+            Thread.sleep(this.waitPause);
         }
 
-        //If not ready yet, wait a moment to make sure it is finished
         if (!this.outputReader.ready()) {
-            synchronized (this) {
-                wait(50);
-            }
+            Thread.sleep(50);
         }
 
         return this.outputReader.ready();
+    }
+
+    private String trimTrailingWhitespace(String source) {
+        int i = source.length() - 1;
+        while (i >= 0 && Character.isWhitespace(source.charAt(i))) {
+            i--;
+        }
+        return source.substring(0, i + 1);
     }
 
     /**

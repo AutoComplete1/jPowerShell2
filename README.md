@@ -3,7 +3,20 @@
 
 ## 🧑‍🏫 About
 
-jPowerShell2 is a fork of [jPowerShell](https://github.com/profesorfalken/jPowerShell) from [profesorfalken](https://github.com/profesorfalken). Unfortunately, nothing has been changed on the project since 2019. After I found the project very good and needed it, I decided to develop it further with the name jPowerShell2. If there are any errors or wishes, please feel free to open issues with detailed information.
+jPowerShell2 is a fork of the original [jPowerShell](https://github.com/profesorfalken/jPowerShell) library. Since the original project has been inactive since 2019, this fork aims to modernize the codebase, improve performance using modern Java features (like Virtual Threads), and add support for PowerShell Core (pwsh).
+
+## 🚀 Key Improvements in jPowerShell2
+
+- **Performance:** Switched to Java Virtual Threads (Project Loom) for lightweight non-blocking I/O.
+- **PowerShell Core Support:** Easily toggle between classic Windows PowerShell and cross-platform PowerShell Core (pwsh).
+- **Async Execution:** Native support for CompletableFuture to run commands without blocking your main thread.
+- **Optimized Buffering:** Increased I/O throughput for large command outputs.
+
+## 📝 Requirements
+
+- **Java 21 or higher**
+
+If you are stuck on an older Java version (like Java 8 or 11), you should use the original jPowerShell or build commit `e93759cc29cce870c62549613bd9adaea8112aa7`. However, for modern applications, Java 21+ is highly recommended.
 
 ## 💻 Installation
 
@@ -31,121 +44,97 @@ https://repo1.maven.org/maven2/io/github/autocomplete1/jPowerShell2/1.0.3/jPower
 
 ### Single command execution
 
-If you only need to execute a single command, this is the quickest way to do it.
+Quickest way to execute a command and get the result immediately.
 
-```java  
-   //Execute a command in PowerShell session  
-   PowerShellResponse response = PowerShell.executeSingleCommand("Get-Process");  
-  
-   //Print results  
-   System.out.println("List Processes:" + response.getCommandOutput());  
+```java
+PowerShellResponse response = PowerShell.executeSingleCommand("Get-Process");  
+System.out.println("Output: " + response.getCommandOutput());
 ```  
 
-### Executing one or multiple commands using the same PowerShell session
+### Using Persistent Sessions (Recommended)
 
-If you have to execute multiple commands, it is recommended to reuse the same session in order to be more efficient (each session has to open a PowerShell console process in the background).
+Reusing a session is significantly faster because it keeps the PowerShell process alive in the background.
 
 ```java  
-   //Creates PowerShell session (we can execute several commands in the same session)  
-   try (PowerShell powerShell = PowerShell.openSession()) {  
-       //Execute a command in PowerShell session  
-       PowerShellResponse response = powerShell.executeCommand("Get-Process");  
-  
-       //Print results  
-       System.out.println("List Processes:" + response.getCommandOutput());  
-  
-       //Execute another command in the same PowerShell session  
-       response = powerShell.executeCommand("Get-WmiObject Win32_BIOS");  
-  
-       //Print results  
-       System.out.println("BIOS information:" + response.getCommandOutput());  
-   } catch(PowerShellNotAvailableException ex) {  
-       //Handle error when PowerShell is not available in the system  
-       //Maybe try in another way?  
-   }  
+try (PowerShell powerShell = PowerShell.openSession()) {
+    PowerShellResponse res1 = powerShell.executeCommand("Get-Date");
+    PowerShellResponse res2 = powerShell.executeCommand("Get-Service");  
+} catch(PowerShellNotAvailableException ex) {
+    logger.error("PowerShell not found on this system", ex);
+}
 ```  
+### PowerShell Core (pwsh) Support
 
-You can also choose to execute the same commands with a more fluent style using the _executeCommandAndChain_ method:
+You can explicitly tell jPowerShell2 to use PowerShell Core (available on Windows, Linux, and macOS).
 
-```java  
-    PowerShell.openSession()  
-                    .executeCommandAndChain("Get-Process", (res -> System.out.println("List Processes:" + res.getCommandOutput())))  
-                    .executeCommandAndChain("Get-WmiObject Win32_BIOS", (res -> System.out.println("BIOS information:" + res.getCommandOutput())))  
-                    .close();  
-```  
+```java
+// Open a session specifically using 'pwsh'
+try (PowerShell powerShell = PowerShell.openSession(true)) {  
+    powerShell.executeCommand("Write-Host 'Running on PowerShell Core!'");
+}
+```
 
-### Configure jPowerShell Session
+### Asynchronous Execution
 
-You can easily configure the jPowerShell session:
+Run commands in the background and handle the result when it's ready using `CompletableFuture`.
 
-* *By project* creating a _jpowershell.properties_ file in the classpath of your project and settings the variables you want to override.
-* *By call*, using a map that can be chained to powershell call.
+```java
+PowerShell.openSession().executeCommandAsync("Start-Sleep -s 5; Get-Service")
+    .thenAccept(response -> {
+        System.out.println("Async result: " + response.getCommandOutput());
+    });
+```
 
-For example:
+### Fluent API
 
-```java  
-    //Set the timeout when waiting for command to terminate to 30 seconds instead of 10 (default value)  
-    Map<String, String> myConfig = new HashMap<>();  
-    myConfig.put("maxWait", "30000");  
-    response = powerShell.configuration(myConfig).executeCommand("Get-WmiObject Win32_BIOS");  
-```  
+Chain multiple commands together for cleaner code:
 
-The variables that can be configured in jPowerShell are:
+```java
+PowerShell.openSession()  
+    .executeCommandAndChain("Get-Process", (res -> System.out.println("Processes: " + res.getCommandOutput())))  
+    .executeCommandAndChain("Get-Date", (res -> System.out.println("Current Date: " + res.getCommandOutput())))  
+    .close();
+```
 
-*waitPause*: the pause in ms between each loop pooling for a response. Default value is 10
+## ⚙️ Configuration
 
-*maxWait*: the maximum wait in ms for the command to execute. Default value is 10000
+You can configure the session via a `jpowershell.properties` file in your classpath or programmatically:
 
-*tempFolder*: if you set this variable jPowerShell will use this folder in order to store temporary the scripts to execute.  
-By default the environment variable _java.io.tmpdir_ will be used.
+```java
+Map<String, String> config = new HashMap<>();  
+config.put("maxWait", "30000");      // Timeout in ms (default: 10000)
+config.put("useCore", "true");       // Use 'pwsh' instead of 'powershell'
+config.put("waitPause", "5");        // Polling interval in ms
 
-### Setting the PowerShell executable path
+response = powerShell.configuration(config).executeCommand("Get-WmiObject Win32_BIOS");
+```
 
-If the PowerShell executable has a different name/path on your system, you can change it when opening a new session:
+| Property   | Description                                           | Default        |
+|------------|-------------------------------------------------------|----------------|
+| waitPause  | The pause in ms between pooling loops for a response. | 5              |
+| maxWait    | The maximum wait in ms for a command to finish.       | 10000          |
+| useCore    | Whether to use PowerShell Core (pwsh).                | false          |
+| tempFolder | Custom folder for temporary script files.             | java.io.tmpdir |
 
-```java  
-    //Creates PowerShell session  
-    try (PowerShell powerShell = PowerShell.openSession("myCustomPowerShellExecutable.exe")) {  
-       [...]  
-```  
+## 📜 Executing Scripts
+To execute a `.ps1` file:
 
-### Executing PowerShell Script
+```java
+try (PowerShell powerShell = PowerShell.openSession()) {         
+    response = powerShell.executeScript("./MyScript.ps1", "-Param1 Value1");  
+    System.out.println("Script output: " + response.getCommandOutput());  
+}
+```
 
-In order to execute a PowerShell Script it is recommended to use the executeScript() method instead of executeCommand():
+**Scripts inside a JAR**
 
-```java  
-   try (PowerShell powerShell = PowerShell.openSession()) {         
-       //Increase timeout to give enough time to the script to finish  
-       Map<String, String> config = new HashMap<String, String>();  
-       config.put("maxWait", "80000");  
-         
-       //Execute script  
-       response = powerShell.configuration(config).executeScript("./myPath/MyScript.ps1");  
-         
-       //Print results if the script  
-       System.out.println("Script output:" + response.getCommandOutput());  
-   } catch(PowerShellNotAvailableException ex) {  
-       //Handle error when PowerShell is not available in the system  
-       //Maybe try in another way?  
-   }  
-```  
+To run a script bundled as a resource in your JAR file:
 
-### Executing PowerShell Scripts packaged inside jar
+```java
+BufferedReader reader = new BufferedReader(
+    new InputStreamReader(getClass().getResourceAsStream("/scripts/MyScript.ps1")));
 
-In order to execute a PowerShell Script that is bundled inside a jar you must use a BufferedReader to load the resource:
-
-```java  
-    PowerShell powerShell = PowerShell.openSession();  
-    String script = "resourcePath/MyScript.ps1"  
-    String scriptParams = "-Parameter value"  
-  
-    //Read the resource  
-    BufferedReader srcReader = new BufferedReader(  
-                    new InputStreamReader(getClass().getResourceAsStream(script)));  
-  
-    if (scriptParams != null && !scriptParams.equals("")) {  
-        response = powerShell.executeScript(srcReader, scriptParams);  
-    } else {  
-        response =  powerShell.executeScript(srcReader);  
-    }  
+try (PowerShell ps = PowerShell.openSession()) {
+    PowerShellResponse response = ps.executeScript(reader);
+}
 ```

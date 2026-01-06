@@ -17,7 +17,6 @@ package io.github.autocomplete1;
 
 import java.io.*;
 import java.nio.charset.Charset;
-import java.util.Date;
 import java.util.Map;
 import java.util.concurrent.*;
 import java.util.logging.Level;
@@ -36,37 +35,100 @@ import java.util.logging.Logger;
  */
 public class PowerShell implements AutoCloseable {
 
+    public static final String END_SCRIPT_STRING = "--END-JPOWERSHELL-SCRIPT--";
     //Declare logger
     private static final Logger logger = Logger.getLogger(PowerShell.class.getName());
-
+    //Default PowerShell executable path
+    private static final String DEFAULT_WIN_EXECUTABLE = "powershell.exe";
+    private static final String DEFAULT_LINUX_EXECUTABLE = "powershell";
+    private static final String CORE_EXECUTABLE = "pwsh";
     // Process to store PowerShell session
     private Process p;
     //PID of the process
     private long pid = -1;
     // Writer to send commands
     private PrintWriter commandWriter;
-
     private BufferedReader outputReader;
-
     // Threaded session variables
     private boolean closed = false;
     private ExecutorService executorService;
-
-    //Default PowerShell executable path
-    private static final String DEFAULT_WIN_EXECUTABLE = "powershell.exe";
-    private static final String DEFAULT_LINUX_EXECUTABLE = "powershell";
-
     // Config values
     private int waitPause = 5;
     private long maxWait = 10000;
     private File tempFolder = null;
-
+    private boolean useCore = false;
     // Variables used for script mode
     private boolean scriptMode = false;
-    public static final String END_SCRIPT_STRING = "--END-JPOWERSHELL-SCRIPT--";
 
     // Private constructor. Instance using openSession method
     private PowerShell() {
+    }
+
+    /**
+     * Creates a session in PowerShell console which returns an instance which allows
+     * executing commands in PowerShell context.<br>
+     * It uses the default PowerShell installation in the system.
+     *
+     * @return an instance of the class
+     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
+     */
+    public static PowerShell openSession() throws PowerShellNotAvailableException {
+        return openSession(null);
+    }
+
+    public static PowerShell openSession(boolean useCore) throws PowerShellNotAvailableException {
+        PowerShell ps = new PowerShell();
+        ps.useCore = useCore;
+        return ps.initialize(null);
+    }
+
+    /**
+     * Creates a session in PowerShell console which returns an instance which allows
+     * executing commands in PowerShell context.<br>
+     * This method allows to define a PowersShell executable path different from default
+     *
+     * @param customPowerShellExecutablePath the path of powershell executable. If you are using
+     *                                       the default installation path, call {@link #openSession()} method instead
+     * @return an instance of the class
+     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
+     */
+    public static PowerShell openSession(String customPowerShellExecutablePath) throws PowerShellNotAvailableException {
+        return openSession(customPowerShellExecutablePath, null);
+    }
+
+    /**
+     * Creates a session in PowerShell console which returns an instance which allows
+     * executing commands in PowerShell context.<br>
+     * This method allows to define a PowersShell executable path different from default
+     *
+     * @param customPowerShellExecutablePath the path of powershell executable. If you are using
+     *                                       the default installation path, call {@link #openSession()} method instead
+     * @param config                         map with the configuration in key/value format
+     * @return an instance of the class
+     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
+     */
+    public static PowerShell openSession(String customPowerShellExecutablePath, Map<String, String> config) throws PowerShellNotAvailableException {
+        PowerShell powerShell = new PowerShell();
+        powerShell.configuration(config);
+        return powerShell.initialize(customPowerShellExecutablePath);
+    }
+
+    /**
+     * Execute a single command in PowerShell console scriptMode and gets result
+     *
+     * @param command the command to execute
+     * @return response with the output of the command
+     */
+    public static PowerShellResponse executeSingleCommand(String command) {
+        PowerShellResponse response = null;
+
+        try (PowerShell session = PowerShell.openSession()) {
+            response = session.executeCommand(command);
+        } catch (PowerShellNotAvailableException ex) {
+            logger.log(Level.SEVERE, "PowerShell not available", ex);
+        }
+
+        return response;
     }
 
     /**
@@ -102,6 +164,9 @@ public class PowerShell implements AutoCloseable {
                     case "tempFolder":
                         this.tempFolder = getTempFolder(value);
                         break;
+                    case "useCore":
+                        this.useCore = Boolean.parseBoolean(value);
+                        break;
                 }
             });
 
@@ -115,97 +180,47 @@ public class PowerShell implements AutoCloseable {
         return this;
     }
 
-    /**
-     * Creates a session in PowerShell console which returns an instance which allows
-     * executing commands in PowerShell context.<br>
-     * It uses the default PowerShell installation in the system.
-     *
-     * @return an instance of the class
-     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
-     */
-    public static PowerShell openSession() throws PowerShellNotAvailableException {
-        return openSession(null);
-    }
-
-    /**
-     * Creates a session in PowerShell console which returns an instance which allows
-     * executing commands in PowerShell context.<br>
-     * This method allows to define a PowersShell executable path different from default
-     *
-     * @param customPowerShellExecutablePath the path of powershell executable. If you are using
-     *                                       the default installation path, call {@link #openSession()} method instead
-     * @return an instance of the class
-     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
-     */
-    public static PowerShell openSession(String customPowerShellExecutablePath) throws PowerShellNotAvailableException {
-        return openSession(customPowerShellExecutablePath, null);
-    }
-
-    /**
-     * Creates a session in PowerShell console which returns an instance which allows
-     * executing commands in PowerShell context.<br>
-     * This method allows to define a PowersShell executable path different from default
-     *
-     * @param customPowerShellExecutablePath the path of powershell executable. If you are using
-     *                                       the default installation path, call {@link #openSession()} method instead
-     * @param config                         map with the configuration in key/value format
-     * @return an instance of the class
-     * @throws PowerShellNotAvailableException if PowerShell is not installed in the system
-     */
-    public static PowerShell openSession(String customPowerShellExecutablePath, Map<String, String> config) throws PowerShellNotAvailableException {
-        PowerShell powerShell = new PowerShell();
-
-        // Start with default configuration
-        powerShell.configuration(config);
-
-        String powerShellExecutablePath = customPowerShellExecutablePath == null ? (OSDetector.isWindows() ? DEFAULT_WIN_EXECUTABLE : DEFAULT_LINUX_EXECUTABLE) : customPowerShellExecutablePath;
-
-        return powerShell.initialize(powerShellExecutablePath);
-    }
-
     // Initializes PowerShell console in which we will enter the commands
-    private PowerShell initialize(String powerShellExecutablePath) throws PowerShellNotAvailableException {
+    private PowerShell initialize(String customPath) throws PowerShellNotAvailableException {
+        String executable;
+
+        if (customPath != null) {
+            executable = customPath;
+        } else if (this.useCore) {
+            executable = CORE_EXECUTABLE;
+        } else {
+            executable = OSDetector.isWindows() ? DEFAULT_WIN_EXECUTABLE : DEFAULT_LINUX_EXECUTABLE;
+        }
+
         String codePage = PowerShellCodepage.getIdentifierByCodePageName(Charset.defaultCharset().name());
         ProcessBuilder pb;
 
-        //Start powershell executable in process
-        if (OSDetector.isWindows()) {
-            pb = new ProcessBuilder("cmd.exe", "/c", "chcp", codePage, ">", "NUL", "&", powerShellExecutablePath,
+        if (OSDetector.isWindows() && !this.useCore) {
+            pb = new ProcessBuilder("cmd.exe", "/c", "chcp", codePage, ">", "NUL", "&", executable,
                     "-ExecutionPolicy", "Bypass", "-NoExit", "-NoProfile", "-Command", "-");
         } else {
-            pb = new ProcessBuilder(powerShellExecutablePath, "-nologo", "-noexit", "-Command", "-");
+            pb = new ProcessBuilder(executable, "-nologo", "-noexit", "-Command", "-");
         }
 
-        //Merge standard and error streams
         pb.redirectErrorStream(true);
 
         try {
-            //Launch process
             p = pb.start();
-
             if (p.waitFor(5, TimeUnit.SECONDS) && !p.isAlive()) {
-                throw new PowerShellNotAvailableException(
-                        "Cannot execute PowerShell. Please make sure that it is installed in your system. Errorcode:" + p.exitValue());
+                throw new PowerShellNotAvailableException("Executable not found: " + executable);
             }
         } catch (IOException | InterruptedException ex) {
-            throw new PowerShellNotAvailableException(
-                    "Cannot execute PowerShell. Please make sure that it is installed in your system", ex);
+            throw new PowerShellNotAvailableException("Cannot execute PowerShell: " + executable, ex);
         }
 
-        //Prepare writer that will be used to send commands to powershell
-        this.commandWriter = new PrintWriter(new OutputStreamWriter(new BufferedOutputStream(p.getOutputStream())), true);
-
+        this.commandWriter = new PrintWriter(new OutputStreamWriter(
+                new BufferedOutputStream(p.getOutputStream(), 65536), Charset.defaultCharset()), true);
         this.outputReader = new BufferedReader(new InputStreamReader(p.getInputStream()));
-
-        // Init thread pool. 2 threads are needed: one to write and read console and the other to close it
-        this.executorService = Executors.newFixedThreadPool(2);
-
-        //Get and store the PID of the process
-        this.pid = getPID();
+        this.executorService = Executors.newVirtualThreadPerTaskExecutor();
+        this.pid = p.pid();
 
         return this;
     }
-
 
     /**
      * Execute a PowerShell command.
@@ -253,27 +268,12 @@ public class PowerShell implements AutoCloseable {
         return new PowerShellResponse(isError, commandOutput, timeout);
     }
 
-    /**
-     * Execute a single command in PowerShell console scriptMode and gets result
-     *
-     * @param command the command to execute
-     * @return response with the output of the command
-     */
-    public static PowerShellResponse executeSingleCommand(String command) {
-        PowerShellResponse response = null;
-
-        try (PowerShell session = PowerShell.openSession()) {
-            response = session.executeCommand(command);
-        } catch (PowerShellNotAvailableException ex) {
-            logger.log(Level.SEVERE, "PowerShell not available", ex);
-        }
-
-        return response;
+    public CompletableFuture<PowerShellResponse> executeCommandAsync(String command) {
+        return CompletableFuture.supplyAsync(() -> executeCommand(command), executorService);
     }
 
     /**
-     * Allows chaining command executions providing a more fluent API.<p>
-     * <p>
+     * Allows chaining command executions providing a more fluent API.
      * This method allows also to optionally handle the response in a closure
      *
      * @param command  the command to execute
@@ -383,39 +383,19 @@ public class PowerShell implements AutoCloseable {
 
     // Writes a temp powershell script file based on the srcReader
     private File createWriteTempFile(BufferedReader srcReader) {
-
-        BufferedWriter tmpWriter = null;
         File tmpFile = null;
-
         try {
-            tmpFile = File.createTempFile("psscript_" + new Date().getTime(), ".ps1", this.tempFolder);
-            if (!tmpFile.exists()) {
-                return null;
-            }
+            tmpFile = File.createTempFile("psscript_" + System.currentTimeMillis(), ".ps1", this.tempFolder);
 
-            tmpWriter = new BufferedWriter(new FileWriter(tmpFile));
-            String line;
-            while (srcReader != null && (line = srcReader.readLine()) != null) {
-                tmpWriter.write(line);
+            try (BufferedWriter tmpWriter = new BufferedWriter(new FileWriter(tmpFile))) {
+                srcReader.transferTo(tmpWriter);
+
                 tmpWriter.newLine();
+                tmpWriter.write("Write-Output \"" + END_SCRIPT_STRING + "\"");
             }
-
-            // Add end script line
-            tmpWriter.write("Write-Output \"" + END_SCRIPT_STRING + "\"");
-        } catch (IOException ioex) {
-            logger.log(Level.SEVERE,
-                    "Unexpected error while writing temporary PowerShell script", ioex);
-        } finally {
-            try {
-                if (tmpWriter != null) {
-                    tmpWriter.close();
-                }
-            } catch (IOException ex) {
-                logger.log(Level.SEVERE,
-                        "Unexpected error when processing temporary PowerShell script", ex);
-            }
+        } catch (IOException ioException) {
+            logger.log(Level.SEVERE, "Unexpected error when processing temporary PowerShell script", ioException);
         }
-
         return tmpFile;
     }
 
@@ -492,20 +472,6 @@ public class PowerShell implements AutoCloseable {
         if (this.closed) {
             throw new IllegalStateException("PowerShell is already closed. Please open a new session.");
         }
-    }
-
-    //Use Powershell command '$PID' in order to recover the process identifier
-    private long getPID() {
-        String commandOutput = executeCommand("$pid").getCommandOutput();
-
-        //Remove all non-numeric characters
-        commandOutput = commandOutput.replaceAll("\\D", "");
-
-        if (!commandOutput.isEmpty()) {
-            return Long.parseLong(commandOutput);
-        }
-
-        return -1;
     }
 
     //Return the temp folder File object or null if the path does not exist
